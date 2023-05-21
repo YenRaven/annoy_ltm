@@ -273,6 +273,9 @@ def retrieve_related_memories(annoy_index, input_messages, history_rows, index_t
             results_indices.extend(indices)
             results_distances.extend(distances)
 
+        if len(results_indices) == 0:
+            return [] # If we don't have any results, not much point in progressing.
+
         # 1. Combine the results
         indices_distances = list(zip(results_indices, results_distances))
 
