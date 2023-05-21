@@ -257,6 +257,7 @@ def retrieve_related_memories(annoy_index, input_messages, history_rows, index_t
         indices, distances = annoy_index.get_nns_by_vector(input_embedding, num_related_memories, include_distances=True)
         results_indices.extend(indices)
         results_distances.extend(distances)
+        original_input_results_count = len(results_distances)
 
         # Get keywords
         keywords = preprocess_and_extract_keywords(input_str)
@@ -280,7 +281,7 @@ def retrieve_related_memories(annoy_index, input_messages, history_rows, index_t
         indices_distances = list(zip(results_indices, results_distances))
 
         # 2. Apply the weight to the original input distances
-        for i in range(num_related_memories):
+        for i in range(original_input_results_count):
             indices_distances[i] = (indices_distances[i][0], indices_distances[i][1] * weight)
 
         # 3. Create a new list of unique history positions tupled with their distance while applying weights for duplicates
