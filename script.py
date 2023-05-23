@@ -154,6 +154,7 @@ def _get_device():
 def generate_embeddings(text):
     input_ids = shared.tokenizer.encode(text, return_tensors="pt", add_special_tokens=False)
     input_ids = input_ids.to(_get_device())  # Move input_ids to the model's device
+    input_ids = input_ids.long() # ensure the values are not floats
 
     with torch.no_grad():
         input_embeds = shared.model.model.embed_tokens(input_ids)
