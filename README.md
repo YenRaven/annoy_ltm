@@ -27,6 +27,11 @@ python -m spacy download en_core_web_sm
 ```
 2. Follow the regular installation process for extensions to the oobabooga-text-generation-webui application.
 
+3. Navigate to the annoy_ltm extension folder and run the following command to install the dependencies:
+```bash
+pip install -r requirements.txt
+```
+
 
 ## Usage
 
