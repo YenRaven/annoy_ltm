@@ -12,17 +12,21 @@ This extension can be installed like any other extension to the oobabooga-text-g
 
 1. Download and install the Spacy en_core_web_sm model. You can do this by running the `cmd_windows.bat` and then executing the following commands in the resulting cmd shell:
 
+Windows WSL:
+
 ```bash
 pip install -U pip setuptools wheel
 pip install -U spacy
 python -m spacy download en_core_web_sm
 ```
+Linux:
+In the environment you are using for Oobabooga-text-generation-webui, run the folowing command:
 
-1. Follow the regular installation process for extensions to the oobabooga-text-generation-webui application.
+```bash
+python -m spacy download en_core_web_sm
+```
+2. Follow the regular installation process for extensions to the oobabooga-text-generation-webui application.
 
-Make sure to check the requirements.txt file in this repository for any other dependencies.
-
-*Please note:* This extension is compatible with Windows only.
 
 ## Usage
 
