@@ -47,6 +47,7 @@ Once the extension is enabled, it works automatically with no additional steps n
 | `keyword_grouping`          | Number to group keywords into. Higher values make it harder to find an exact match, potentially improving context relevance at the cost of memory retrieval. | `4` |
 | `maximum_memory_stack_size` | Maximum size for the memory stack, preventing overflow. | `50` |
 | `prompt_memory_ratio`       | The ratio of the prompt after character context is applied that will be dedicated for memories. | `0.4` |
+| `vector_dim_override` | Override value for the hidden layer dimension of your loaded model, Use if you encounter issues with the generated embeddings not matching the dimensionality of the annoy index. `-1` is disabled. | `-1` |
 
 These parameters allow you to tune the operation of `annoy_ltm` to best suit your specific use-case.
 
