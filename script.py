@@ -19,7 +19,7 @@ from collections import deque
 params = {
     'annoy_output_dir': "extensions/annoy_ltm/outputs/",
     'logger_level': 1, # higher number is more verbose logging. 3 is really as high as any reasonable person should go for normal debugging
-    #'vector_dim': 6656, # magic number determined by your loaded model. Need to find a way to calculate this...
+    'vector_dim_override': -1, # magic number determined by your loaded model. This parameter is here so that should some style of model in the future not include the hidden_size in the config, this can be used as a workaround.
     'memory_retention_threshold': 0.68, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
     'full_memory_additional_weight': 0.5, # 0-1, smaller value is more weight here.
     'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group generated from the message. Can cause significant slowdowns.
@@ -163,6 +163,16 @@ def generate_embeddings(text):
     result = input_embeds.cpu().numpy().flatten()  # Convert to NumPy array and flatten
     logger(f"generating embeddings for text: {text}\n{result}", 5)
     return result
+
+#--------------- Hidden Size Helper -------------
+def _get_hidden_size():
+    if params['vector_dim_override'] != -1:
+        return params['vector_dim_override']
+    
+    try:
+        return shared.model.model.config.hidden_size
+    except AttributeError:
+        return len(generate_embeddings('generate a set of embeddings to determin size of result list'))
 
 #--------------- Turn Templates ---------------
 def get_turn_templates(state, is_instruct):
@@ -517,10 +527,12 @@ class ChatGenerator:
         else:
             logger(f"loaded metadata file ({len(metadata['messages_hash'])})", 2)
 
-        loaded_annoy_index = AnnoyIndex(shared.model.model.config.hidden_size, 'angular')
+        hidden_size = _get_hidden_size()
+
+        loaded_annoy_index = AnnoyIndex(hidden_size, 'angular')
         loaded_history_last_index = 0
         
-        annoy_index = AnnoyIndex(shared.model.model.config.hidden_size, 'angular')
+        annoy_index = AnnoyIndex(hidden_size, 'angular')
         
         if check_hashes(metadata):
             logger(f"hashes check passed, proceeding to load existing memory db...", 2)
