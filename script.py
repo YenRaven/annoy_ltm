@@ -535,15 +535,18 @@ class ChatGenerator:
         annoy_index = AnnoyIndex(hidden_size, 'angular')
         
         if check_hashes(metadata):
-            logger(f"hashes check passed, proceeding to load existing memory db...", 2)
-            self.keyword_tally.importKeywordTally(metadata['keyword_tally'])
-            index_to_history_position = {int(k): v for k, v in metadata['index_to_history_position'].items()}
             loaded_annoy_index.load(annoy_index_file)
             loaded_history_items = loaded_annoy_index.get_n_items()
-            loaded_history_last_index = index_to_history_position[loaded_history_items-1]
-            logger(f"loaded {loaded_history_last_index} items from existing memory db", 3)
-            copy_items(loaded_annoy_index, annoy_index, loaded_history_items)
-            loaded_annoy_index.unload()
+            if loaded_history_items < 1:
+                logger(f"hashes check passed but no items found in annoy db. rebuilding annoy db...", 2)
+            else:
+                logger(f"hashes check passed, proceeding to load existing memory db...", 2)
+                self.keyword_tally.importKeywordTally(metadata['keyword_tally'])
+                index_to_history_position = {int(k): v for k, v in metadata['index_to_history_position'].items()}
+                loaded_history_last_index = index_to_history_position[loaded_history_items-1]
+                logger(f"loaded {loaded_history_last_index} items from existing memory db", 3)
+                copy_items(loaded_annoy_index, annoy_index, loaded_history_items)
+                loaded_annoy_index.unload()
         else:
             logger(f"hashes check failed, either an existing message changed unexpectdly or the extension code has changed. Rebuilding annoy db...", 2)
             self.keyword_tally = KeywordTally()
