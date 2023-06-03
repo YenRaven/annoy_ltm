@@ -678,7 +678,12 @@ class ChatGenerator:
             rows.append(apply_extensions("bot_prefix", bot_turn_stripped.rstrip(' ')))
 
         while len(rows) > min_rows and len(encode(''.join(rows))[0]) >= max_length:
-            rows.pop(3 + len(memory_rows))
+            if len(rows) > 3 + len(memory_rows) + min_rows:                                                       
+                rows.pop(3 + len(memory_rows))
+            elif len(rows) > 3 + min_rows:
+                rows.pop(2)
+            else:
+                rows.pop(1)
 
         prompt = ''.join(rows)
         logger(f"custom_generated_prompt:\n\n{prompt}\n\n", 2)
