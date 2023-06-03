@@ -1,13 +1,24 @@
 # ./embeddings.py
 
 from modules import shared
-from extensions.annoy_ltm.helpers import _get_device
+from extensions.annoy_ltm.helpers import get_device
 
 import torch
 
 def generate_embeddings(text, logger):
+    """
+    Generates embeddings for a given text.
+    
+    Parameters:
+    text (str): The input text to generate embeddings for.
+    logger (logging.Logger): A logger to log the process.
+
+    Returns:
+    np.ndarray: The generated embeddings.
+    """
+        
     input_ids = shared.tokenizer.encode(text, return_tensors="pt", add_special_tokens=False)
-    input_ids = input_ids.to(_get_device())  # Move input_ids to the model's device
+    input_ids = input_ids.to(get_device())  # Move input_ids to the model's device
     input_ids = input_ids.long() # ensure the values are not floats
 
     with torch.no_grad():

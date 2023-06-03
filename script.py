@@ -55,7 +55,7 @@ class ChatGenerator:
 
 
     def preprocess_and_extract_keywords(self, text):
-        text_to_process = rem_user_and_time(text)
+        text_to_process = remove_username_and_timestamp(text)
         # Tokenization, lowercasing, and stopword removal
         tokens = [token.text.lower() for token in nlp(text_to_process) if not token.is_stop]
 
@@ -95,7 +95,7 @@ class ChatGenerator:
             logger(f"retrieving memories for <input> {input_str} </input>", 3)
             if num_related_memories == 0:
                 num_related_memories = annoy_index.get_n_items()
-            input_embedding = generate_embeddings(rem_user_and_time(input_str), logger=logger)
+            input_embedding = generate_embeddings(remove_username_and_timestamp(input_str), logger=logger)
             results_indices = []
             results_distances = []
 
@@ -181,7 +181,7 @@ class ChatGenerator:
 
         # Filter out irrelevant memories
         logger(f"HISTORY_ROWS:{history_rows}", 5)
-        conversation = [rem_user_and_time(row) for row in history_rows] + [remove_timestamp(user_input)]
+        conversation = [remove_username_and_timestamp(row) for row in history_rows] + [remove_timestamp(user_input)]
         logger(f"CONVERSATION:{conversation}", 5)
 
         def log_and_check_relevance(memory_tuple, conversation, relevance_threshold):
@@ -357,7 +357,7 @@ class ChatGenerator:
         unique_index = len(index_to_history_position)
         for i, row in enumerate(formated_history_rows):
             for msg in row:
-                trimmed_msg = rem_user_and_time(msg)
+                trimmed_msg = remove_username_and_timestamp(msg)
                 if trimmed_msg and len(trimmed_msg) > 0:
                     # Add the full message
                     logger(f"HISTORY_{i+1}_MSG: {msg}", 4)
@@ -441,7 +441,7 @@ class ChatGenerator:
             )
 
         # Merge new memories into memory stack by distance.
-        self.memory_stack = remove_duplicates(merge_lists_by_distance(self.memory_stack, related_memories, max_new_list_length=params['maximum_memory_stack_size']*params['num_memories_to_retrieve']))
+        self.memory_stack = remove_duplicates(merge_memory_lists_by_distance(self.memory_stack, related_memories, max_new_list_length=params['maximum_memory_stack_size']*params['num_memories_to_retrieve']))
         logger(f"merged {len(related_memories)} memories into stack. Stack size:{len(self.memory_stack)}", 3)
         logger(f"MEMORY_STACK:\n{self.memory_stack}", 5)
 
