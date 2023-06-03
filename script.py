@@ -24,6 +24,7 @@ params = {
     'full_memory_additional_weight': 0.5, # 0-1, smaller value is more weight here.
     'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group generated from the message. Can cause significant slowdowns.
     'keyword_grouping': 4, # the number to group keywords into. Higher means harder to find an exact match, which makes matches more useful to context but too high and no memories will be returned.
+    'keyword_rarity_weight': 1, # Throttles the weight applied to memories favoring unique phrases and vocabularly.
     'maximum_memory_stack_size': 50, # just a cap on the stack so it doesn't blow.
     'prompt_memory_ratio': 0.4 # the ratio of prompt after the character context is applied that will be dedicated for memories.
 }
@@ -318,10 +319,11 @@ def retrieve_related_memories(annoy_index, input_messages, history_rows, index_t
         index, memory, distance = related_memories[i]
         memory_keywords = []
         for user_msg, bot_reply in memory:
-            memory_keywords.extend(preprocess_and_extract_keywords(user_msg))
-            memory_keywords.extend(preprocess_and_extract_keywords(bot_reply))
+            memory_keywords.extend(filter_keywords(preprocess_and_extract_keywords(user_msg)))
+            memory_keywords.extend(filter_keywords(preprocess_and_extract_keywords(bot_reply)))
 
-        significance = keyword_tally.get_significance(memory_keywords)
+        significance = params['keyword_rarity_weight'] * keyword_tally.get_significance(memory_keywords)
+        logger(f"keywords [{','.join(memory_keywords)}] significance calculated at {significance}", 4)
 
         # Apply the significance ratio to the memory's distance value
         related_memories[i] = (index, memory, distance * significance)
@@ -342,6 +344,7 @@ class KeywordTally:
     def __init__(self):
         self.keyword_tally_count = {}
         self.total_keywords = 0
+        self.most_common_count = 0
 
     def tally(self, keywords):
         for keyword in keywords:
@@ -351,11 +354,14 @@ class KeywordTally:
             else:
                 self.keyword_tally_count[keyword] = 1
 
+            if self.keyword_tally_count[keyword] > self.most_common_count:
+                self.most_common_count = self.keyword_tally_count[keyword]
+
     def get_significance(self, keywords):
         significance = 0
         for keyword in keywords:
             if keyword in self.keyword_tally_count:
-                ratio = self.keyword_tally_count[keyword] / self.total_keywords
+                ratio = self.keyword_tally_count[keyword] / self.most_common_count
                 significance += 1 - ratio
         return significance / len(keywords)
     
@@ -365,6 +371,7 @@ class KeywordTally:
     def importKeywordTally(self, keyword_tally_data):
         self.keyword_tally_count = keyword_tally_data
         self.total_keywords = sum(keyword_tally_data.values())
+        self.most_common_count = max(keyword_tally_data.values())
 
 
 
