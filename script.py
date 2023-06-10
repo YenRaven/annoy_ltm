@@ -437,10 +437,8 @@ class ChatGenerator:
 
         # Finding the maximum prompt size
         chat_prompt_size = state['chat_prompt_size']
-        if shared.soft_prompt:
-            chat_prompt_size -= shared.soft_prompt_tensor.shape[1]
-
         max_length = min(get_max_prompt_length(state), chat_prompt_size)
+        
         # Calc the max length for the memory block
         max_memory_length = floor(max_length * params['prompt_memory_ratio']) - len(encode("Memories:\n\n\nChat:\n")[0])
 
