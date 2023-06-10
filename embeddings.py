@@ -22,7 +22,12 @@ def generate_embeddings(text, logger):
     input_ids = input_ids.long() # ensure the values are not floats
 
     with torch.no_grad():
-        input_embeds = shared.model.model.embed_tokens(input_ids)
+        if hasattr(shared.model.model, 'embed_tokens'):
+            input_embeds = shared.model.model.embed_tokens(input_ids)
+        elif hasattr(shared.model.model, 'get_input_embeddings'):
+            input_embeds = shared.model.model.get_input_embeddings()(input_ids)
+        else:
+            raise AttributeError("The model doesn't have an 'embed_tokens' or 'get_input_embeddings' method.")
 
     input_embeds = input_embeds.mean(dim=1).squeeze(0)  # Remove the extra dimension
     result = input_embeds.cpu().numpy().flatten()  # Convert to NumPy array and flatten

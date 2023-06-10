@@ -5,11 +5,11 @@ from typing import List
 import numpy as np
 import torch
 
-def remove_username(message: str) -> str:
+def remove_username(message: str, state) -> str:
     """
-    Removes the username prefix from a message string. Assumes the username is at the start of the message followed by ': '. Returns the message without the username.
+    Removes the username prefix from a message string. Returns the message without the username.
     """
-    return re.sub(r'^.+?:\s*', '', message)
+    return re.sub(rf'^{state["name1"].strip()}[:,\s]*', '', message)
 
 def remove_timestamp(message: str) -> str:
     """
@@ -17,11 +17,11 @@ def remove_timestamp(message: str) -> str:
     """
     return re.sub(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', '', message)
 
-def remove_username_and_timestamp(message: str) -> str:
+def remove_username_and_timestamp(message: str, state) -> str:
     """
     Removes both the username and timestamp from a message string. Returns the message without the username and timestamp.
     """
-    return remove_username(remove_timestamp(message))
+    return remove_username(remove_timestamp(message), state)
 
 def filter_keywords(keywords, min_length=3):
     """

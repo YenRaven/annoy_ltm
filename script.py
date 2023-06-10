@@ -20,8 +20,10 @@ params = {
     'logger_level': 1, # higher number is more verbose logging. 3 is really as high as any reasonable person should go for normal debugging
     'vector_dim_override': -1, # magic number determined by your loaded model. This parameter is here so that should some style of model in the future not include the hidden_size in the config, this can be used as a workaround.
     'memory_retention_threshold': 0.68, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
-    'full_memory_additional_weight': 0.5, # 0-1, smaller value is more weight here.
-    'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group generated from the message. Can cause significant slowdowns.
+    'full_memory_additional_weight': 0.3, # 0-1, smaller value is more weight here.
+    'keyword_match_weight': 0.6, # 0-1, smaller value is more weight here.
+    'named_entity_match_clamp_min_dist': 0.6, # 0-1, clamp weight to this value, Prevents exact NER match from overriding all other memories. 
+    'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group and named entity generated from the message. Can cause significant slowdowns.
     'keyword_grouping': 4, # the number to group keywords into. Higher means harder to find an exact match, which makes matches more useful to context but too high and no memories will be returned.
     'keyword_rarity_weight': 1, # Throttles the weight applied to memories favoring unique phrases and vocabularly.
     'maximum_memory_stack_size': 50, # just a cap on the stack so it doesn't blow.
@@ -53,60 +55,88 @@ class ChatGenerator:
         except AttributeError:
             return len(generate_embeddings('generate a set of embeddings to determin size of result list', logger=logger))
 
+    def preprocess_and_extract_named_entities(self, text):
+        # Named Entity Recognition
+        doc = nlp(text)
+        named_entities = [ent.text for ent in doc.ents]
+
+        return named_entities
 
     def preprocess_and_extract_keywords(self, text):
-        text_to_process = remove_username_and_timestamp(text)
         # Tokenization, lowercasing, and stopword removal
-        tokens = [token.text.lower() for token in nlp(text_to_process) if not token.is_stop]
+        tokens = [token.text.lower() for token in nlp(text) if not token.is_stop]
 
         # Lemmatization
         lemmatized_tokens = [token.lemma_ for token in nlp(" ".join(tokens))]
 
-        # Named Entity Recognition
-        doc = nlp(text_to_process)
-        named_entities = [ent.text for ent in doc.ents]
-
-        keywords = lemmatized_tokens + named_entities
+        keywords = lemmatized_tokens
 
         return keywords
+    
+    def trim_and_preprocess_text(self, text, state):
+        text_to_process = remove_username_and_timestamp(text, state)
+        keywords = self.preprocess_and_extract_keywords(text_to_process)
+        named_entities = self.preprocess_and_extract_named_entities(text_to_process)
+
+        return keywords, named_entities
         
     #--------------- Memory ---------------
-    def evaluate_memory_relevance(self, memory, conversation, min_relevance_threshold=0.2):
+    def compare_text_embeddings(self, text1, text2):
+        logger(f"comparing text {text1}\nagainst {text2}", 5)
+        text1_embeddings = generate_embeddings(text1, logger=logger)
+        text2_embeddings = generate_embeddings(text2, logger=logger)
+        logger(f"text1_embeddings: {text1_embeddings}", 6)
+        logger(f"text2_embeddings: {text2_embeddings}", 6)
+        logger(f"len text1_embeddings: {len(text1_embeddings)}", 6)
+        logger(f"len text2_embeddings: {len(text2_embeddings)}", 6)
+        cosine_similarity_value = cosine_similarity(text1_embeddings, text2_embeddings)
+        logger(f"manually computed cosine similarity: {cosine_similarity_value}", 5)
+
+        return cosine_similarity_value
+
+
+    def evaluate_memory_relevance(self, state, memory, conversation, min_relevance_threshold=0.2):
         memory_text = ''.join([user_mem + '\n' + bot_mem for user_mem, bot_mem in memory])
         conversation_text = ''.join(conversation)
         logger(f"evaluating memory relevance for memory: {memory}", 4)
-        memory_keywords = " ".join(filter_keywords(self.preprocess_and_extract_keywords(memory_text)))
-        conversation_keywords = " ".join(filter_keywords(self.preprocess_and_extract_keywords(conversation_text)))
-        logger(f"comparing keywords {memory_keywords}\nagainst conversation {conversation_keywords}", 5)
-        memory_embeddings = generate_embeddings(memory_keywords, logger=logger)
-        conversation_embeddings = generate_embeddings(conversation_keywords, logger=logger)
-        logger(f"memory_embeddings: {memory_embeddings}", 6)
-        logger(f"conversation_embeddings: {conversation_embeddings}", 6)
-        logger(f"len memory_embeddings: {len(memory_embeddings)}", 6)
-        logger(f"len conversation_embeddings: {len(conversation_embeddings)}", 6)
-        cosine_similarity_value = cosine_similarity(memory_embeddings, conversation_embeddings)
-        logger(f"manually computed cosine similarity: {cosine_similarity_value}", 5)
-        return cosine_similarity_value >= min_relevance_threshold
+        memory_keywords, memory_named_entities = self.trim_and_preprocess_text(memory_text, state)
+        conversation_keywords, conversation_named_entities = self.trim_and_preprocess_text(conversation_text, state)
+
+        memory_keywords = " ".join(filter_keywords(memory_keywords))
+        conversation_keywords = " ".join(filter_keywords(conversation_keywords))
+
+        memory_named_entities = " ".join(memory_named_entities)
+        conversation_named_entities = " ".join(conversation_named_entities)
+
+        logger(f"comparing memory_keywords against conversation_keywords", 5)
+        keyword_similarity_value = self.compare_text_embeddings(memory_keywords, conversation_keywords)
+
+        logger(f"comparing memory_named_entities against conversation_named_entities", 5)
+        named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities)
+
+        similarity_value = (keyword_similarity_value + named_entitiy_similarity_value) / 2
+        logger(f"calculated_similarity: {similarity_value}")
+        return similarity_value >= min_relevance_threshold
 
 
-    def retrieve_related_memories(self, annoy_index, input_messages, history_rows, index_to_history_position, keyword_tally, num_related_memories=3, weight=0.5):
+    def retrieve_related_memories(self, state, annoy_index, input_messages, history_rows, index_to_history_position, keyword_tally, num_related_memories=3, weight=0.5):
         return_memories = set()
         for input_str in input_messages:
             logger(f"retrieving memories for <input> {input_str} </input>", 3)
             if num_related_memories == 0:
                 num_related_memories = annoy_index.get_n_items()
-            input_embedding = generate_embeddings(remove_username_and_timestamp(input_str), logger=logger)
+            input_embedding = generate_embeddings(remove_username_and_timestamp(input_str, state), logger=logger)
             results_indices = []
             results_distances = []
 
             # Query for the original input_embedding
             indices, distances = annoy_index.get_nns_by_vector(input_embedding, num_related_memories, include_distances=True)
             results_indices.extend(indices)
-            results_distances.extend(distances)
+            results_distances.extend(map(lambda x: x * weight, distances))
             original_input_results_count = len(results_distances)
 
-            # Get keywords
-            keywords = self.preprocess_and_extract_keywords(input_str)
+            # Get keywords and named entities
+            keywords, named_entities = self.trim_and_preprocess_text(input_str, state)
             filtered_keywords = filter_keywords(keywords)
             keyword_groups = generate_keyword_groups(filtered_keywords, params['keyword_grouping'])
             logger(f"INPUT_KEYWORDS: {','.join(filtered_keywords)}", 4)
@@ -118,17 +148,22 @@ class ChatGenerator:
                 indices, distances = annoy_index.get_nns_by_vector(keyword_embedding, num_related_memories, include_distances=True)
                 logger(f"keyword matches: {keyword}\n{indices}\n{distances}", 5)
                 results_indices.extend(indices)
-                results_distances.extend(distances)
+                results_distances.extend(map(lambda x: x*params['keyword_match_weight'], distances))
+
+            # Query for each named entity
+            named_entities = " ".join(named_entities)
+            named_entity_embedding = generate_embeddings(named_entities, logger=logger)
+            logger(f"looking up named entity \"{named_entities}\" embeddings {named_entity_embedding}", 5)
+            indices, distances = annoy_index.get_nns_by_vector(named_entity_embedding, num_related_memories, include_distances=True)
+            logger(f"named_entities matches: {named_entities}\n{indices}\n{distances}", 5)
+            results_indices.extend(indices)
+            results_distances.extend(map(lambda x: x * (1-params['named_entity_match_clamp_min_dist']) + params['named_entity_match_clamp_min_dist'] , distances))
 
             if len(results_indices) == 0:
                 return [] # If we don't have any results, not much point in progressing.
 
             # 1. Combine the results
             indices_distances = list(zip(results_indices, results_distances))
-
-            # 2. Apply the weight to the original input distances
-            for i in range(original_input_results_count):
-                indices_distances[i] = (indices_distances[i][0], indices_distances[i][1] * weight)
 
             # 3. Create a new list of unique history positions tupled with their distance while applying weights for duplicates
             history_positions_distances = {}
@@ -153,8 +188,10 @@ class ChatGenerator:
             index, memory, distance = related_memories[i]
             memory_keywords = []
             for user_msg, bot_reply in memory:
-                memory_keywords.extend(filter_keywords(self.preprocess_and_extract_keywords(user_msg)))
-                memory_keywords.extend(filter_keywords(self.preprocess_and_extract_keywords(bot_reply)))
+                usr_keywords, usr_ne = self.trim_and_preprocess_text(user_msg, state)
+                bot_keywords, bot_ne = self.trim_and_preprocess_text(bot_reply, state)
+                memory_keywords.extend(filter_keywords(usr_keywords + usr_ne))
+                memory_keywords.extend(filter_keywords(bot_keywords + bot_ne))
 
             significance = params['keyword_rarity_weight'] * keyword_tally.get_significance(memory_keywords)
             logger(f"keywords [{','.join(memory_keywords)}] significance calculated at {significance}", 4)
@@ -176,16 +213,16 @@ class ChatGenerator:
 
 
 
-    def build_memory_rows(self, history_rows, user_input, max_memory_length, turn_templates, relevance_threshold=0.2):
+    def build_memory_rows(self, state, history_rows, user_input, max_memory_length, turn_templates, relevance_threshold=0.2):
         user_turn, bot_turn = turn_templates
 
         # Filter out irrelevant memories
         logger(f"HISTORY_ROWS:{history_rows}", 5)
-        conversation = [remove_username_and_timestamp(row) for row in history_rows] + [remove_timestamp(user_input)]
+        conversation = [remove_username_and_timestamp(row, state) for row in history_rows] + [remove_timestamp(user_input)]
         logger(f"CONVERSATION:{conversation}", 5)
 
         def log_and_check_relevance(memory_tuple, conversation, relevance_threshold):
-            relevance_check = self.evaluate_memory_relevance(memory_tuple[1], conversation, relevance_threshold)
+            relevance_check = self.evaluate_memory_relevance(state, memory_tuple[1], conversation, relevance_threshold)
             logger(f"\nrelevance_check: {relevance_check}\nmemory_tuple: {memory_tuple}", 4)
             return relevance_check
 
@@ -357,7 +394,7 @@ class ChatGenerator:
         unique_index = len(index_to_history_position)
         for i, row in enumerate(formated_history_rows):
             for msg in row:
-                trimmed_msg = remove_username_and_timestamp(msg)
+                trimmed_msg = remove_username_and_timestamp(msg, state)
                 if trimmed_msg and len(trimmed_msg) > 0:
                     # Add the full message
                     logger(f"HISTORY_{i+1}_MSG: {msg}", 4)
@@ -366,9 +403,9 @@ class ChatGenerator:
                     index_to_history_position[unique_index] = i+loaded_history_last_index
                     unique_index += 1
                 
-                    # Add keywords
-                    keywords = self.preprocess_and_extract_keywords(msg)
-                    self.keyword_tally.tally(keywords) # Keep a tally of all keywords
+                    # Add keywords and named entities
+                    keywords, named_entities = self.trim_and_preprocess_text(msg, state)
+                    self.keyword_tally.tally(keywords + named_entities) # Keep a tally of all keywords and named_entities
                     filtered_keywords = filter_keywords(keywords)
                     keyword_groups = generate_keyword_groups(filtered_keywords, params['keyword_grouping'])
                     logger(f"HISTORY_{i+1}_KEYWORDS: {','.join(filtered_keywords)}", 4)
@@ -379,11 +416,19 @@ class ChatGenerator:
                         index_to_history_position[unique_index] = i+loaded_history_last_index
                         unique_index += 1
 
+                    if len(named_entities) > 0:
+                        named_entities = " ".join(named_entities)
+                        embeddings = generate_embeddings(named_entities, logger=logger)
+                        logger(f"storing named_entities \"{named_entities}\" with embeddings {embeddings}", 2)
+                        annoy_index.add_item(unique_index, embeddings)
+                        index_to_history_position[unique_index] = i+loaded_history_last_index
+                        unique_index += 1
+
         annoy_index.build(10)
         
         # Save the annoy index and metadata
         code_hash, messages_hash = compute_hashes()
-        metadata = {'code_hash': code_hash, 'messages_hash': messages_hash, 'index_to_history_position': index_to_history_position, 'keyword_tally': self.keyword_tally.exportKeywordTally()}
+        metadata = {'code_hash': code_hash, 'messages_hash': messages_hash, 'model_name': shared.model_name, 'index_to_history_position': index_to_history_position, 'keyword_tally': self.keyword_tally.exportKeywordTally()}
         save_metadata(metadata, metadata_file)
         annoy_index.save(annoy_index_file)
         
@@ -431,6 +476,7 @@ class ChatGenerator:
             memory_trigger.append(shared.history['internal'][-1][1])
         memory_trigger.append(user_input)
         related_memories = self.retrieve_related_memories(
+            state,
             annoy_index,
             memory_trigger,
             history_partial,
@@ -445,7 +491,7 @@ class ChatGenerator:
         logger(f"merged {len(related_memories)} memories into stack. Stack size:{len(self.memory_stack)}", 3)
         logger(f"MEMORY_STACK:\n{self.memory_stack}", 5)
 
-        memory_rows, num_memories = self.build_memory_rows(history_rows[-2:], user_input, max_memory_length, (user_turn, bot_turn), relevance_threshold=params['memory_retention_threshold'])
+        memory_rows, num_memories = self.build_memory_rows(state, history_rows[-2:], user_input, max_memory_length, (user_turn, bot_turn), relevance_threshold=params['memory_retention_threshold'])
         logger(f"memory_rows:\n{memory_rows}", 5)
         # Remove the least relevant memory row from the memory stack so that the stack will be worked through one memory at a time with each prompt.
         if num_memories > 0 and len(self.memory_stack) > 0:

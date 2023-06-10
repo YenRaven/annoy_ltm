@@ -59,5 +59,8 @@ def check_hashes(metadata, logger):
 
     if metadata['messages_hash'] != messages_hash:
         return False
+    
+    if metadata['model_name'] != shared.model_name:
+        return False
 
     return True
