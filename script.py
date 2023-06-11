@@ -344,6 +344,12 @@ class ChatGenerator:
             # Check if a result was actually fetched before trying to unpack it
             if result is not None:
                 self.index_to_history_position, self.annoy_index, self.keyword_tally = result
+                # Save files to disk
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        self.annoy_manager.save_files_to_disk,
+                        logger
+                    )
 
         logger(f"Annoy database has length {self.annoy_index.get_n_items()}", 3)
 

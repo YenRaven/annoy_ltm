@@ -19,6 +19,9 @@ class AnnoyManager:
         self.text_preprocessor = text_preprocessor
         self.metadata = None
         self.annoy_index = None
+        self.metadata_file = None
+        self.annoy_index_file = None
+        self.hidden_size = None
         self.loaded_history_last_index = 0
         # Create dictionary for annoy indices
         self.index_to_history_position = {}
@@ -31,27 +34,27 @@ class AnnoyManager:
         except AttributeError:
             return len(generate_embeddings('generate a set of embeddings to determin size of result list', logger=logger))
 
-    def save_files_to_disk(self, metadata_file, annoy_index_file, hidden_size, logger):
+    def save_files_to_disk(self, logger):
         logger(f"Saving metadata...", 3)
-        save_metadata(self.metadata, metadata_file)
+        save_metadata(self.metadata, self.metadata_file)
         logger(f"Metadata saved.", 3)
         logger(f"Saving annoy_index...", 3)
-        annoy_index_to_save = AnnoyIndex(hidden_size, 'angular')
+        annoy_index_to_save = AnnoyIndex(self.hidden_size, 'angular')
         copy_items(self.annoy_index, annoy_index_to_save, self.annoy_index.get_n_items(), logger)
         annoy_index_to_save.build(10)
-        annoy_index_to_save.save(annoy_index_file)
+        annoy_index_to_save.save(self.annoy_index_file)
         logger(f"annoy_index saved.", 3)
 
     def generate_annoy_db(self, params, state, keyword_tally, logger):
         # Generate annoy database for LTM
         start_time = time.time()
 
-        metadata_file = f"{params['annoy_output_dir']}{shared.character}-annoy-metadata.json"
-        annoy_index_file = f"{params['annoy_output_dir']}{shared.character}-annoy_index.ann"
+        self.metadata_file = f"{params['annoy_output_dir']}{shared.character}-annoy-metadata.json"
+        self.annoy_index_file = f"{params['annoy_output_dir']}{shared.character}-annoy_index.ann"
 
         if self.metadata == None:
             logger(f"Loading metadata file...", 5)
-            self.metadata = load_metadata(metadata_file)
+            self.metadata = load_metadata(self.metadata_file)
             logger(f"Loaded metadata.", 5)
             if self.metadata == None:
                 logger(f"failed to load character annoy metadata, generating from scratch...", 1)
@@ -60,13 +63,13 @@ class AnnoyManager:
 
         
         if self.annoy_index == None:  
-            hidden_size = self._get_hidden_size(params, logger)
-            loaded_annoy_index = AnnoyIndex(hidden_size, 'angular')
-            self.annoy_index = AnnoyIndex(hidden_size, 'angular')
+            self.hidden_size = self._get_hidden_size(params, logger)
+            loaded_annoy_index = AnnoyIndex(self.hidden_size, 'angular')
+            self.annoy_index = AnnoyIndex(self.hidden_size, 'angular')
             
             if check_hashes(self.metadata, logger=logger):
                 logger(f"Loading annoy database...", 5)
-                loaded_annoy_index.load(annoy_index_file)
+                loaded_annoy_index.load(self.annoy_index_file)
                 logger(f"Loaded database.", 5)
                 loaded_history_items = loaded_annoy_index.get_n_items()
                 if loaded_history_items < 1:
@@ -133,16 +136,6 @@ class AnnoyManager:
             'index_to_history_position': self.index_to_history_position,
             'keyword_tally': keyword_tally.exportKeywordTally()
         }
-        
-        # Save files to disk
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                self.save_files_to_disk,
-                metadata_file,
-                annoy_index_file,
-                hidden_size,
-                logger
-            )
         
         end_time = time.time()
         logger(f"building annoy index took {end_time-start_time} seconds...", 1)
