@@ -21,7 +21,7 @@ params = {
     'annoy_output_dir': "extensions/annoy_ltm/outputs/",
     'logger_level': 1, # higher number is more verbose logging. 3 is really as high as any reasonable person should go for normal debugging
     'vector_dim_override': -1, # magic number determined by your loaded model. This parameter is here so that should some style of model in the future not include the hidden_size in the config, this can be used as a workaround.
-    'memory_retention_threshold': 0.68, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
+    'memory_retention_threshold': 0.52, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
     'full_memory_additional_weight': 0.3, # 0-1, smaller value is more weight here.
     'keyword_match_weight': 0.6, # 0-1, smaller value is more weight here.
     'named_entity_match_clamp_min_dist': 0.6, # 0-1, clamp weight to this value, Prevents exact NER match from overriding all other memories. 
@@ -396,7 +396,7 @@ class ChatGenerator:
             weight=params['full_memory_additional_weight']
             )
         
-        self.annoy_index.unload() # Unload the index so the next one can save properly
+        # self.annoy_index.unload() # Unload the index so the next one can save properly
 
         # Merge new memories into memory stack by distance.
         self.memory_stack = remove_duplicates(merge_memory_lists_by_distance(self.memory_stack, related_memories, max_new_list_length=params['maximum_memory_stack_size']*params['num_memories_to_retrieve']))

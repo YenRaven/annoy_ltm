@@ -5,6 +5,7 @@ import time
 from modules import shared
 from annoy import AnnoyIndex
 import queue
+import concurrent.futures
 
 from extensions.annoy_ltm.helpers import *
 from extensions.annoy_ltm.metadata import check_hashes, compute_hashes, load_metadata, save_metadata
@@ -29,6 +30,17 @@ class AnnoyManager:
             return shared.model.model.config.hidden_size
         except AttributeError:
             return len(generate_embeddings('generate a set of embeddings to determin size of result list', logger=logger))
+
+    def save_files_to_disk(self, metadata_file, annoy_index_file, hidden_size, logger):
+        logger(f"Saving metadata...", 3)
+        save_metadata(self.metadata, metadata_file)
+        logger(f"Metadata saved.", 3)
+        logger(f"Saving annoy_index...", 3)
+        annoy_index_to_save = AnnoyIndex(hidden_size, 'angular')
+        copy_items(self.annoy_index, annoy_index_to_save, self.annoy_index.get_n_items(), logger)
+        annoy_index_to_save.build(10)
+        annoy_index_to_save.save(annoy_index_file)
+        logger(f"annoy_index saved.", 3)
 
     def generate_annoy_db(self, params, state, keyword_tally, logger):
         # Generate annoy database for LTM
@@ -121,12 +133,16 @@ class AnnoyManager:
             'index_to_history_position': self.index_to_history_position,
             'keyword_tally': keyword_tally.exportKeywordTally()
         }
-        logger(f"Saving metadata...", 5)
-        save_metadata(self.metadata, metadata_file)
-        logger(f"Metadata saved.", 5)
-        logger(f"Saving annoy_index...", 5)
-        self.annoy_index.save(annoy_index_file)
-        logger(f"annoy_index saved.", 5)
+        
+        # Save files to disk
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                self.save_files_to_disk,
+                metadata_file,
+                annoy_index_file,
+                hidden_size,
+                logger
+            )
         
         end_time = time.time()
         logger(f"building annoy index took {end_time-start_time} seconds...", 1)
