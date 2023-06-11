@@ -1,6 +1,7 @@
 # ./helpers.py
 
 import re
+import time
 from typing import List
 import numpy as np
 import torch
@@ -89,13 +90,17 @@ def replace_all(text, dic):
 
 
 #--------------- Annoy helpers ---------------
-def copy_items(src_index, dest_index, num_items):
+def copy_items(src_index, dest_index, num_items, logger):
     """
     Copies all items from one annoy index to another
     """
+    start_time = time.time()
     for i in range(num_items):
         item = src_index.get_item_vector(i)
         dest_index.add_item(i, item)
+    
+    end_time = time.time()
+    logger(f"copying annoy index took {end_time-start_time} seconds...", 1)
 
 #--------------- PyTorch helpers ---------------
 

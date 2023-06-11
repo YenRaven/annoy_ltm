@@ -5,13 +5,15 @@ from modules import shared
 from modules.extensions import apply_extensions
 from modules.text_generation import encode, get_max_prompt_length
 from annoy import AnnoyIndex
-import spacy
 from collections import deque
+import queue
+import concurrent.futures
 
 from extensions.annoy_ltm.helpers import *
-from extensions.annoy_ltm.metadata import check_hashes, compute_hashes, load_metadata, save_metadata
+from extensions.annoy_ltm.text_preprocessor import TextPreprocessor
 from extensions.annoy_ltm.embeddings import generate_embeddings
 from extensions.annoy_ltm.keyword_tally import KeywordTally
+from extensions.annoy_ltm.annoy_manager import AnnoyManager
 from extensions.annoy_ltm.turn_templates import get_turn_templates, apply_turn_templates_to_rows
 
 # parameters which can be customized in settings.json of webui
@@ -35,50 +37,18 @@ def logger(msg: str, lvl=5):
     if params['logger_level'] >= lvl:
         print(msg)
 
-#--------------- Spacy NLP ---------------
-nlp = spacy.load("en_core_web_sm", disable=["parser"])
-
 #--------------- Custom Prompt Generator ---------------
 
 class ChatGenerator:
     def __init__(self):
         self.memory_stack = deque()
         self.keyword_tally = KeywordTally()
-
-    #--------------- Hidden Size Helper -------------
-    def _get_hidden_size(self):
-        if params['vector_dim_override'] != -1:
-            return params['vector_dim_override']
+        self.text_preprocessor = TextPreprocessor()
+        self.annoy_manager = AnnoyManager(self.text_preprocessor)
+        self.annoy_index = None
         
-        try:
-            return shared.model.model.config.hidden_size
-        except AttributeError:
-            return len(generate_embeddings('generate a set of embeddings to determin size of result list', logger=logger))
-
-    def preprocess_and_extract_named_entities(self, text):
-        # Named Entity Recognition
-        doc = nlp(text)
-        named_entities = [ent.text for ent in doc.ents]
-
-        return named_entities
-
-    def preprocess_and_extract_keywords(self, text):
-        # Tokenization, lowercasing, and stopword removal
-        tokens = [token.text.lower() for token in nlp(text) if not token.is_stop]
-
-        # Lemmatization
-        lemmatized_tokens = [token.lemma_ for token in nlp(" ".join(tokens))]
-
-        keywords = lemmatized_tokens
-
-        return keywords
-    
-    def trim_and_preprocess_text(self, text, state):
-        text_to_process = remove_username_and_timestamp(text, state)
-        keywords = self.preprocess_and_extract_keywords(text_to_process)
-        named_entities = self.preprocess_and_extract_named_entities(text_to_process)
-
-        return keywords, named_entities
+        # Create dictionary for annoy indices
+        self.index_to_history_position = {}
         
     #--------------- Memory ---------------
     def compare_text_embeddings(self, text1, text2):
@@ -99,8 +69,8 @@ class ChatGenerator:
         memory_text = ''.join([user_mem + '\n' + bot_mem for user_mem, bot_mem in memory])
         conversation_text = ''.join(conversation)
         logger(f"evaluating memory relevance for memory: {memory}", 4)
-        memory_keywords, memory_named_entities = self.trim_and_preprocess_text(memory_text, state)
-        conversation_keywords, conversation_named_entities = self.trim_and_preprocess_text(conversation_text, state)
+        memory_keywords, memory_named_entities = self.text_preprocessor.trim_and_preprocess_text(memory_text, state)
+        conversation_keywords, conversation_named_entities = self.text_preprocessor.trim_and_preprocess_text(conversation_text, state)
 
         memory_keywords = " ".join(filter_keywords(memory_keywords))
         conversation_keywords = " ".join(filter_keywords(conversation_keywords))
@@ -136,7 +106,7 @@ class ChatGenerator:
             original_input_results_count = len(results_distances)
 
             # Get keywords and named entities
-            keywords, named_entities = self.trim_and_preprocess_text(input_str, state)
+            keywords, named_entities = self.text_preprocessor.trim_and_preprocess_text(input_str, state)
             filtered_keywords = filter_keywords(keywords)
             keyword_groups = generate_keyword_groups(filtered_keywords, params['keyword_grouping'])
             logger(f"INPUT_KEYWORDS: {','.join(filtered_keywords)}", 4)
@@ -188,8 +158,8 @@ class ChatGenerator:
             index, memory, distance = related_memories[i]
             memory_keywords = []
             for user_msg, bot_reply in memory:
-                usr_keywords, usr_ne = self.trim_and_preprocess_text(user_msg, state)
-                bot_keywords, bot_ne = self.trim_and_preprocess_text(bot_reply, state)
+                usr_keywords, usr_ne = self.text_preprocessor.trim_and_preprocess_text(user_msg, state)
+                bot_keywords, bot_ne = self.text_preprocessor.trim_and_preprocess_text(bot_reply, state)
                 memory_keywords.extend(filter_keywords(usr_keywords + usr_ne))
                 memory_keywords.extend(filter_keywords(bot_keywords + bot_ne))
 
@@ -350,95 +320,37 @@ class ChatGenerator:
         rows = [state['context'] if is_instruct else f"{state['context'].strip()}\n"]
         min_rows = 3
 
-        # Create dictionary for annoy indices
-        index_to_history_position = {}
 
         # Generate annoy database for LTM
-        start_time = time.time()
-
-        metadata_file = f"{params['annoy_output_dir']}{shared.character}-annoy-metadata.json"
-        annoy_index_file = f"{params['annoy_output_dir']}{shared.character}-annoy_index.ann"
-
-        metadata = load_metadata(metadata_file)
-        if metadata == None:
-            logger(f"failed to load character annoy metadata, generating from scratch...", 1)
+        if self.annoy_index == None:
+            self.index_to_history_position, self.annoy_index, self.keyword_tally = self.annoy_manager.generate_annoy_db(params, state, self.keyword_tally, logger)
         else:
-            logger(f"loaded metadata file ({len(metadata['messages_hash'])})", 2)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.annoy_manager.generate_annoy_db,
+                    params,
+                    state,
+                    self.keyword_tally,
+                    logger
+                )
+            
+            result = None
+            while not self.annoy_manager.results_queue.empty():
+                try:
+                    result = self.annoy_manager.results_queue.get_nowait()
+                except queue.Empty:
+                    continue  # in case the queue was emptied between the check and get_nowait()
 
-        hidden_size = self._get_hidden_size()
+            # Check if a result was actually fetched before trying to unpack it
+            if result is not None:
+                self.index_to_history_position, self.annoy_index, self.keyword_tally = result
 
-        loaded_annoy_index = AnnoyIndex(hidden_size, 'angular')
-        loaded_history_last_index = 0
-        
-        annoy_index = AnnoyIndex(hidden_size, 'angular')
-        
-        if check_hashes(metadata, logger=logger):
-            loaded_annoy_index.load(annoy_index_file)
-            loaded_history_items = loaded_annoy_index.get_n_items()
-            if loaded_history_items < 1:
-                logger(f"hashes check passed but no items found in annoy db. rebuilding annoy db...", 2)
-            else:
-                logger(f"hashes check passed, proceeding to load existing memory db...", 2)
-                self.keyword_tally.importKeywordTally(metadata['keyword_tally'])
-                index_to_history_position = {int(k): v for k, v in metadata['index_to_history_position'].items()}
-                loaded_history_last_index = index_to_history_position[loaded_history_items-1]
-                logger(f"loaded {loaded_history_last_index} items from existing memory db", 3)
-                copy_items(loaded_annoy_index, annoy_index, loaded_history_items)
-                loaded_annoy_index.unload()
-        else:
-            logger(f"hashes check failed, either an existing message changed unexpectdly or the extension code has changed. Rebuilding annoy db...", 2)
-            self.keyword_tally = KeywordTally()
-
-        formated_history_rows = apply_turn_templates_to_rows(shared.history['internal'][loaded_history_last_index:], state, logger=logger)
-        logger(f"found {len(formated_history_rows)} rows of chat history to be added to memory db. adding items...", 3)
-        unique_index = len(index_to_history_position)
-        for i, row in enumerate(formated_history_rows):
-            for msg in row:
-                trimmed_msg = remove_username_and_timestamp(msg, state)
-                if trimmed_msg and len(trimmed_msg) > 0:
-                    # Add the full message
-                    logger(f"HISTORY_{i+1}_MSG: {msg}", 4)
-                    embeddings = generate_embeddings(trimmed_msg, logger=logger)
-                    annoy_index.add_item(unique_index, embeddings)
-                    index_to_history_position[unique_index] = i+loaded_history_last_index
-                    unique_index += 1
-                
-                    # Add keywords and named entities
-                    keywords, named_entities = self.trim_and_preprocess_text(msg, state)
-                    self.keyword_tally.tally(keywords + named_entities) # Keep a tally of all keywords and named_entities
-                    filtered_keywords = filter_keywords(keywords)
-                    keyword_groups = generate_keyword_groups(filtered_keywords, params['keyword_grouping'])
-                    logger(f"HISTORY_{i+1}_KEYWORDS: {','.join(filtered_keywords)}", 4)
-                    for keyword in keyword_groups:
-                        embeddings = generate_embeddings(keyword, logger=logger)
-                        logger(f"storing keyword \"{keyword}\" with embeddings {embeddings}", 5)
-                        annoy_index.add_item(unique_index, embeddings)
-                        index_to_history_position[unique_index] = i+loaded_history_last_index
-                        unique_index += 1
-
-                    if len(named_entities) > 0:
-                        named_entities = " ".join(named_entities)
-                        embeddings = generate_embeddings(named_entities, logger=logger)
-                        logger(f"storing named_entities \"{named_entities}\" with embeddings {embeddings}", 2)
-                        annoy_index.add_item(unique_index, embeddings)
-                        index_to_history_position[unique_index] = i+loaded_history_last_index
-                        unique_index += 1
-
-        annoy_index.build(10)
-        
-        # Save the annoy index and metadata
-        code_hash, messages_hash = compute_hashes()
-        metadata = {'code_hash': code_hash, 'messages_hash': messages_hash, 'model_name': shared.model_name, 'index_to_history_position': index_to_history_position, 'keyword_tally': self.keyword_tally.exportKeywordTally()}
-        save_metadata(metadata, metadata_file)
-        annoy_index.save(annoy_index_file)
-        
-        end_time = time.time()
-        logger(f"building annoy index took {end_time-start_time} seconds...", 1)
+        logger(f"Annoy database has length {self.annoy_index.get_n_items()}", 3)
 
         # Finding the maximum prompt size
         chat_prompt_size = state['chat_prompt_size']
         max_length = min(get_max_prompt_length(state), chat_prompt_size)
-        
+
         # Calc the max length for the memory block
         max_memory_length = floor(max_length * params['prompt_memory_ratio']) - len(encode("Memories:\n\n\nChat:\n")[0])
 
@@ -475,14 +387,16 @@ class ChatGenerator:
         memory_trigger.append(user_input)
         related_memories = self.retrieve_related_memories(
             state,
-            annoy_index,
+            self.annoy_index,
             memory_trigger,
             history_partial,
-            index_to_history_position,
+            self.index_to_history_position,
             self.keyword_tally,
             num_related_memories=params['num_memories_to_retrieve'],
             weight=params['full_memory_additional_weight']
             )
+        
+        self.annoy_index.unload() # Unload the index so the next one can save properly
 
         # Merge new memories into memory stack by distance.
         self.memory_stack = remove_duplicates(merge_memory_lists_by_distance(self.memory_stack, related_memories, max_new_list_length=params['maximum_memory_stack_size']*params['num_memories_to_retrieve']))

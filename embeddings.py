@@ -36,3 +36,16 @@ def generate_embeddings(text, logger):
     result = input_embeds.cpu().numpy().flatten()  # Convert to NumPy array and flatten
     logger(f"generating embeddings for text: {text}\n{result}", 5)
     return result
+
+class Embeddings:
+    def __init__(self) -> None:
+        self.embeddings = {}
+
+    def add_embedding(self, unique_index, embeddings):
+        self.embeddings[unique_index] = embeddings
+    
+    def export_embeddings(self):
+        return self.embeddings
+    
+    def import_embeddings(self, embeddings):
+        self.embeddings = embeddings
