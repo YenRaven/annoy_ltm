@@ -21,7 +21,7 @@ params = {
     'annoy_output_dir': "extensions/annoy_ltm/outputs/",
     'logger_level': 1, # higher number is more verbose logging. 3 is really as high as any reasonable person should go for normal debugging
     'vector_dim_override': -1, # magic number determined by your loaded model. This parameter is here so that should some style of model in the future not include the hidden_size in the config, this can be used as a workaround.
-    'memory_retention_threshold': 0.52, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
+    'memory_retention_threshold': 0.7, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
     'full_memory_additional_weight': 0.3, # 0-1, smaller value is more weight here.
     'keyword_match_weight': 0.6, # 0-1, smaller value is more weight here.
     'named_entity_match_clamp_min_dist': 0.6, # 0-1, clamp weight to this value, Prevents exact NER match from overriding all other memories. 
@@ -65,7 +65,7 @@ class ChatGenerator:
         return cosine_similarity_value
 
 
-    def evaluate_memory_relevance(self, state, memory, conversation, min_relevance_threshold=0.2):
+    def evaluate_memory_relevance(self, state, memory, conversation, min_relevance_threshold=0.2) -> bool:
         memory_text = ''.join([user_mem + '\n' + bot_mem for user_mem, bot_mem in memory])
         conversation_text = ''.join(conversation)
         logger(f"evaluating memory relevance for memory: {memory}", 4)
@@ -83,10 +83,16 @@ class ChatGenerator:
 
         logger(f"comparing memory_named_entities against conversation_named_entities", 5)
         named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities)
+        
+        value_sum = keyword_similarity_value + named_entitiy_similarity_value
+        similarity_value = 0.0
+        if value_sum > 0.0:
+            similarity_value = (keyword_similarity_value + named_entitiy_similarity_value) / 2.0
 
-        similarity_value = (keyword_similarity_value + named_entitiy_similarity_value) / 2
-        logger(f"calculated_similarity: {similarity_value}")
-        return similarity_value >= min_relevance_threshold
+        relevance_value = 1.0 - similarity_value
+        logger(f"calculated relevance: {relevance_value}", 3)
+        logger(f"is relevant: {relevance_value >= min_relevance_threshold}", 6)
+        return relevance_value >= min_relevance_threshold
 
 
     def retrieve_related_memories(self, state, annoy_index, input_messages, history_rows, index_to_history_position, keyword_tally, num_related_memories=3, weight=0.5):
@@ -198,7 +204,7 @@ class ChatGenerator:
 
         # Use the log_and_check_relevance function in the list comprehension
         new_memory_stack = [memory_tuple for memory_tuple in self.memory_stack if log_and_check_relevance(memory_tuple, conversation, relevance_threshold)]
-        new_memory_stack = new_memory_stack[params['maximum_memory_stack_size']:]
+        new_memory_stack = new_memory_stack[:params['maximum_memory_stack_size']]
 
         logger(f"MEMORY_STACK:{new_memory_stack}", 5)
         logger(f"MEMORY_STACK SIZE: {len(new_memory_stack)}", 3)
@@ -356,7 +362,6 @@ class ChatGenerator:
         # Finding the maximum prompt size
         chat_prompt_size = state['chat_prompt_size']
         max_length = min(get_max_prompt_length(state), chat_prompt_size)
-
         # Calc the max length for the memory block
         max_memory_length = floor(max_length * params['prompt_memory_ratio']) - len(encode("Memories:\n\n\nChat:\n")[0])
 
