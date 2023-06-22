@@ -24,6 +24,7 @@ params = {
     'memory_retention_threshold': 0.7, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
     'full_memory_additional_weight': 0.3, # 0-1, smaller value is more weight here.
     'keyword_match_weight': 0.6, # 0-1, smaller value is more weight here.
+    'ner_character_len_weight': 100, #number of characters to max out weight of named entities at.
     'named_entity_match_clamp_min_dist': 0.6, # 0-1, clamp weight to this value, Prevents exact NER match from overriding all other memories. 
     'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group and named entity generated from the message. Can cause significant slowdowns.
     'keyword_grouping': 4, # the number to group keywords into. Higher means harder to find an exact match, which makes matches more useful to context but too high and no memories will be returned.
@@ -82,12 +83,12 @@ class ChatGenerator:
         keyword_similarity_value = self.compare_text_embeddings(memory_keywords, conversation_keywords)
 
         logger(f"comparing memory_named_entities against conversation_named_entities", 5)
-        named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities)
+        named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities) * (min(len(memory_named_entities), params['ner_character_len_weight']) / params['ner_character_len_weight']) #This is a bit of a hack to give more NEs a higher weight
         
         value_sum = keyword_similarity_value + named_entitiy_similarity_value
         similarity_value = 0.0
         if value_sum > 0.0:
-            similarity_value = (keyword_similarity_value + named_entitiy_similarity_value) / 2.0
+            similarity_value = value_sum / 2.0
 
         relevance_value = 1.0 - similarity_value
         logger(f"calculated relevance: {relevance_value}", 3)
