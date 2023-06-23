@@ -24,7 +24,7 @@ params = {
     'memory_retention_threshold': 0.7, # 0-1, lower value will make memories retain longer but can cause stack to overflow and irrelevant memories to be held onto
     'full_memory_additional_weight': 0.3, # 0-1, smaller value is more weight here.
     'keyword_match_weight': 0.6, # 0-1, smaller value is more weight here.
-    'ner_character_len_weight': 100, #number of characters to max out weight of named entities at.
+    'ner_character_len_weight': 100.0, #number of characters to max out weight of named entities at.
     'named_entity_match_clamp_min_dist': 0.6, # 0-1, clamp weight to this value, Prevents exact NER match from overriding all other memories. 
     'num_memories_to_retrieve': 5, # the number of related memories to retrieve for the full message and every keyword group and named entity generated from the message. Can cause significant slowdowns.
     'keyword_grouping': 4, # the number to group keywords into. Higher means harder to find an exact match, which makes matches more useful to context but too high and no memories will be returned.
@@ -53,6 +53,9 @@ class ChatGenerator:
         
     #--------------- Memory ---------------
     def compare_text_embeddings(self, text1, text2):
+        if len(text1) == 0 or len(text2) == 0:
+            return 1
+        
         logger(f"comparing text {text1}\nagainst {text2}", 5)
         text1_embeddings = generate_embeddings(text1, logger=logger)
         text2_embeddings = generate_embeddings(text2, logger=logger)
@@ -62,6 +65,8 @@ class ChatGenerator:
         logger(f"len text2_embeddings: {len(text2_embeddings)}", 6)
         cosine_similarity_value = cosine_similarity(text1_embeddings, text2_embeddings)
         logger(f"manually computed cosine similarity: {cosine_similarity_value}", 5)
+        if cosine_similarity_value == None:
+            return 1
 
         return cosine_similarity_value
 
@@ -69,7 +74,7 @@ class ChatGenerator:
     def evaluate_memory_relevance(self, state, memory, conversation, min_relevance_threshold=0.2) -> bool:
         memory_text = ''.join([user_mem + '\n' + bot_mem for user_mem, bot_mem in memory])
         conversation_text = ''.join(conversation)
-        logger(f"evaluating memory relevance for memory: {memory}", 4)
+        logger(f"\nevaluating memory relevance for memory: {memory}", 3)
         memory_keywords, memory_named_entities = self.text_preprocessor.trim_and_preprocess_text(memory_text, state)
         conversation_keywords, conversation_named_entities = self.text_preprocessor.trim_and_preprocess_text(conversation_text, state)
 
@@ -81,15 +86,18 @@ class ChatGenerator:
 
         logger(f"comparing memory_keywords against conversation_keywords", 5)
         keyword_similarity_value = self.compare_text_embeddings(memory_keywords, conversation_keywords)
-
+        logger(f"keyword_similarity_value: {keyword_similarity_value}", 6)
         logger(f"comparing memory_named_entities against conversation_named_entities", 5)
-        named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities) * (min(len(memory_named_entities), params['ner_character_len_weight']) / params['ner_character_len_weight']) #This is a bit of a hack to give more NEs a higher weight
-        
-        value_sum = keyword_similarity_value + named_entitiy_similarity_value
+        named_entitiy_similarity_value = self.compare_text_embeddings(memory_named_entities, conversation_named_entities)
+        logger(f"named_entity_similarity_value: {named_entitiy_similarity_value}", 6)
+        named_entity_weight_calc = (named_entitiy_similarity_value + (1.0 - float((min(len(memory_named_entities), params['ner_character_len_weight']) / params['ner_character_len_weight'])))) / 2 #This is a bit of a hack to give more NEs a higher weight
+        logger(f"named_entity_weight_calc: {named_entity_weight_calc}", 6)
+        value_sum = keyword_similarity_value + named_entity_weight_calc
+        logger(f"value_sum: {value_sum}", 6)
         similarity_value = 0.0
         if value_sum > 0.0:
             similarity_value = value_sum / 2.0
-
+        logger(f"similarity_value: {similarity_value}", 5)
         relevance_value = 1.0 - similarity_value
         logger(f"calculated relevance: {relevance_value}", 3)
         logger(f"is relevant: {relevance_value >= min_relevance_threshold}", 6)

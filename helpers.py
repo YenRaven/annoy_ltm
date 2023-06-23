@@ -10,7 +10,7 @@ def remove_username(message: str, state) -> str:
     """
     Removes the username prefix from a message string. Returns the message without the username.
     """
-    return re.sub(rf'^{state["name1"].strip()}[:,\s]*', '', message)
+    return re.sub(rf'^({state["name1"].strip()}|{state["name2"].strip()})[:,\s]*', '', message)
 
 def remove_timestamp(message: str) -> str:
     """
@@ -73,9 +73,15 @@ def cosine_similarity(a, b):
     """
     Computes the cosine similarity between two vectors a and b
     """
-    dot_product = np.dot(a, b)
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
+    
+    if norm_a == 0 or norm_b == 0:
+        # Handle the case where a or b is a zero vector.
+        # Here we return None, but you could also return 0 or another value.
+        return None
+
+    dot_product = np.dot(a, b)
     return dot_product / (norm_a * norm_b)
 
 # Replace multiple string pairs in a string
