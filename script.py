@@ -369,8 +369,7 @@ class ChatGenerator:
         logger(f"Annoy database has length {self.annoy_index.get_n_items()}", 3)
 
         # Finding the maximum prompt size
-        chat_prompt_size = state['chat_prompt_size']
-        max_length = min(get_max_prompt_length(state), chat_prompt_size)
+        max_length = get_max_prompt_length(state)
         # Calc the max length for the memory block
         max_memory_length = floor(max_length * params['prompt_memory_ratio']) - len(encode("Memories:\n\n\nChat:\n")[0])
 
