@@ -19,6 +19,10 @@ class KeywordTally:
 
     def get_significance(self, keywords):
         significance = 0
+        keywords_len = len(keywords)
+        if keywords_len == 0:
+            return 0
+        
         for keyword in keywords:
             if keyword in self.keyword_tally_count:
                 ratio = self.keyword_tally_count[keyword] / self.most_common_count

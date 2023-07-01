@@ -1,6 +1,7 @@
 # ./helpers.py
 
 import re
+import time
 from typing import List
 import numpy as np
 import torch
@@ -9,7 +10,7 @@ def remove_username(message: str, state) -> str:
     """
     Removes the username prefix from a message string. Returns the message without the username.
     """
-    return re.sub(rf'^{state["name1"].strip()}[:,\s]*', '', message)
+    return re.sub(rf'^({state["name1"].strip()}|{state["name2"].strip()})[:,\s]*', '', message)
 
 def remove_timestamp(message: str) -> str:
     """
@@ -72,9 +73,15 @@ def cosine_similarity(a, b):
     """
     Computes the cosine similarity between two vectors a and b
     """
-    dot_product = np.dot(a, b)
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
+    
+    if norm_a == 0 or norm_b == 0:
+        # Handle the case where a or b is a zero vector.
+        # Here we return None, but you could also return 0 or another value.
+        return None
+
+    dot_product = np.dot(a, b)
     return dot_product / (norm_a * norm_b)
 
 # Replace multiple string pairs in a string
@@ -89,13 +96,17 @@ def replace_all(text, dic):
 
 
 #--------------- Annoy helpers ---------------
-def copy_items(src_index, dest_index, num_items):
+def copy_items(src_index, dest_index, num_items, logger):
     """
     Copies all items from one annoy index to another
     """
+    start_time = time.time()
     for i in range(num_items):
         item = src_index.get_item_vector(i)
         dest_index.add_item(i, item)
+    
+    end_time = time.time()
+    logger(f"copying annoy index took {end_time-start_time} seconds...", 1)
 
 #--------------- PyTorch helpers ---------------
 
