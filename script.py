@@ -74,7 +74,7 @@ class ChatGenerator:
     def evaluate_memory_relevance(self, state, memory, conversation, min_relevance_threshold=0.2) -> bool:
         memory_text = ''.join([user_mem + '\n' + bot_mem for user_mem, bot_mem in memory])
         conversation_text = ''.join(conversation)
-        logger(f"\nevaluating memory relevance for memory: {memory}", 3)
+        logger(f"\nevaluating memory relevance for memory: {memory}", 4)
         memory_keywords, memory_named_entities = self.text_preprocessor.trim_and_preprocess_text(memory_text, state)
         conversation_keywords, conversation_named_entities = self.text_preprocessor.trim_and_preprocess_text(conversation_text, state)
 
@@ -100,7 +100,6 @@ class ChatGenerator:
         logger(f"similarity_value: {similarity_value}", 5)
         relevance_value = 1.0 - similarity_value
         logger(f"calculated relevance: {relevance_value}", 3)
-        logger(f"is relevant: {relevance_value >= min_relevance_threshold}", 6)
         return relevance_value >= min_relevance_threshold
 
 
@@ -335,20 +334,22 @@ class ChatGenerator:
         rows = [state['context'] if is_instruct else f"{state['context'].strip()}\n"]
         min_rows = 3
 
+        generate_annoy_db_executor = None
+        save_files_to_disk_executor = None
+
 
         # Generate annoy database for LTM
         if self.annoy_index == None:
             self.index_to_history_position, self.annoy_index, self.keyword_tally = self.annoy_manager.generate_annoy_db(params, state, self.keyword_tally, logger)
         else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self.annoy_manager.generate_annoy_db,
-                    params,
-                    state,
-                    self.keyword_tally,
-                    logger
-                )
-            
+            generate_annoy_db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            generate_annoy_db_executor.submit(
+                self.annoy_manager.generate_annoy_db,
+                params,
+                state,
+                self.keyword_tally,
+                logger
+            )
             result = None
             while not self.annoy_manager.results_queue.empty():
                 try:
@@ -360,11 +361,13 @@ class ChatGenerator:
             if result is not None:
                 self.index_to_history_position, self.annoy_index, self.keyword_tally = result
                 # Save files to disk
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        self.annoy_manager.save_files_to_disk,
-                        logger
-                    )
+                save_files_to_disk_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                save_files_to_disk_executor.submit(
+                    self.annoy_manager.save_files_to_disk,
+                    logger
+                )
+                save_files_to_disk_executor.shutdown(wait=False)
+            generate_annoy_db_executor.shutdown(wait=False)
 
         logger(f"Annoy database has length {self.annoy_index.get_n_items()}", 3)
 

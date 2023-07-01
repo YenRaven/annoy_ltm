@@ -18,15 +18,20 @@ def generate_embeddings(text, logger):
     """
         
     input_ids = shared.tokenizer.encode(text, return_tensors="pt", add_special_tokens=False)
-    input_ids = input_ids.to(get_device())  # Move input_ids to the model's device
     input_ids = input_ids.long() # ensure the values are not floats
 
     with torch.no_grad():
-        if hasattr(shared.model.model, 'embed_tokens'):
+        if hasattr(shared.model, 'ex_model'):
+            input_ids = input_ids.to(torch.device("cpu"))  # Move input_ids to the model's device
+            input_embeds = shared.model.ex_model.embed_tokens(input_ids)
+        elif hasattr(shared.model.model, 'embed_tokens'):
+            input_ids = input_ids.to(get_device())  # Move input_ids to the model's device
             input_embeds = shared.model.model.embed_tokens(input_ids)
         elif hasattr(shared.model.model, 'get_input_embeddings'):
+            input_ids = input_ids.to(get_device())  # Move input_ids to the model's device
             input_embeds = shared.model.model.get_input_embeddings()(input_ids)
         elif hasattr(shared.model.model, 'model'): # Reported in issue #17
+            input_ids = input_ids.to(get_device())  # Move input_ids to the model's device
             if hasattr(shared.model.model.model, 'embed_tokens'):
                 input_embeds = shared.model.model.model.embed_tokens(input_ids)
         else:

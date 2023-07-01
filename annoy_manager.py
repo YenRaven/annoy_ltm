@@ -30,6 +30,11 @@ class AnnoyManager:
         if params['vector_dim_override'] != -1:
             return params['vector_dim_override']
         try:
+            if hasattr(shared.model, 'ex_config'):
+                return shared.model.ex_config.hidden_size
+            if hasattr(shared.model, 'config'):
+                return shared.model.config.hidden_size
+            
             return shared.model.model.config.hidden_size
         except AttributeError:
             return len(generate_embeddings('generate a set of embeddings to determin size of result list', logger=logger))
