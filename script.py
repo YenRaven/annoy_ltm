@@ -34,15 +34,16 @@ params = {
 }
 
 #--------------- Logger ---------------
-def logger(msg: str, lvl=5):
-    if params['logger_level'] >= lvl:
-        print(msg)
+def logger(message: str, level=5):
+    if params['logger_level'] >= level:
+        print(message)
 
 #--------------- Custom Prompt Generator ---------------
 
 class ChatGenerator:
     def __init__(self):
         self.memory_stack = deque()
+        self.loaded_character = None
         self.keyword_tally = KeywordTally()
         self.text_preprocessor = TextPreprocessor()
         self.annoy_manager = AnnoyManager(self.text_preprocessor)
@@ -103,7 +104,7 @@ class ChatGenerator:
         return relevance_value >= min_relevance_threshold
 
 
-    def retrieve_related_memories(self, state, annoy_index, input_messages, history_rows, index_to_history_position, keyword_tally, num_related_memories=3, weight=0.5):
+    def retrieve_related_memories(self, state, history, annoy_index, input_messages, history_rows, index_to_history_position, keyword_tally, num_related_memories=3, weight=0.5):
         return_memories = set()
         for input_str in input_messages:
             logger(f"retrieving memories for <input> {input_str} </input>", 3)
@@ -128,20 +129,21 @@ class ChatGenerator:
             # Query for each keyword_embedding
             for keyword in keyword_groups:
                 keyword_embedding = generate_embeddings(keyword, logger=logger)
-                logger(f"looking up keyword \"{keyword}\" embeddings {keyword_embedding}", 5)
+                logger(f"looking up keyword \"{keyword}\" embeddings {keyword_embedding}", 3)
                 indices, distances = annoy_index.get_nns_by_vector(keyword_embedding, num_related_memories, include_distances=True)
-                logger(f"keyword matches: {keyword}\n{indices}\n{distances}", 5)
+                logger(f"keyword matches: {keyword}\n{indices}\n{distances}", 3)
                 results_indices.extend(indices)
                 results_distances.extend(map(lambda x: x*params['keyword_match_weight'], distances))
 
             # Query for each named entity
-            named_entities = " ".join(named_entities)
-            named_entity_embedding = generate_embeddings(named_entities, logger=logger)
-            logger(f"looking up named entity \"{named_entities}\" embeddings {named_entity_embedding}", 5)
-            indices, distances = annoy_index.get_nns_by_vector(named_entity_embedding, num_related_memories, include_distances=True)
-            logger(f"named_entities matches: {named_entities}\n{indices}\n{distances}", 5)
-            results_indices.extend(indices)
-            results_distances.extend(map(lambda x: x * (1-params['named_entity_match_clamp_min_dist']) + params['named_entity_match_clamp_min_dist'] , distances))
+            if len(named_entities) > 0:
+                named_entities = " ".join(named_entities)
+                named_entity_embedding = generate_embeddings(named_entities, logger=logger)
+                logger(f"looking up named entity \"{named_entities}\" embeddings {named_entity_embedding}", 3)
+                indices, distances = annoy_index.get_nns_by_vector(named_entity_embedding, num_related_memories, include_distances=True)
+                logger(f"named_entities matches: {named_entities}\n{indices}\n{distances}", 3)
+                results_indices.extend(indices)
+                results_distances.extend(map(lambda x: x * (1-params['named_entity_match_clamp_min_dist']) + params['named_entity_match_clamp_min_dist'] , distances))
 
             if len(results_indices) == 0:
                 return [] # If we don't have any results, not much point in progressing.
@@ -165,7 +167,7 @@ class ChatGenerator:
             # return_memories.extend(weighted_history_positions)
 
         # 4. Get the related memories using the new sorted list
-        related_memories = [(pos, shared.history['internal'][max(0, pos - 1):pos + 1], distance) for pos, distance in list(return_memories)]
+        related_memories = [(pos, history['internal'][max(0, pos - 1):pos + 1], distance) for pos, distance in list(return_memories)]
 
         # Get keywords for each memory and calculate their significance
         for i in range(len(related_memories)):
@@ -340,13 +342,15 @@ class ChatGenerator:
 
         # Generate annoy database for LTM
         if self.annoy_index == None:
-            self.index_to_history_position, self.annoy_index, self.keyword_tally = self.annoy_manager.generate_annoy_db(params, state, self.keyword_tally, logger)
+            self.index_to_history_position, self.annoy_index, self.keyword_tally = self.annoy_manager.generate_annoy_db(params, state, kwargs['history'], self.keyword_tally, logger)
+            self.annoy_manager.save_files_to_disk(logger)
         else:
             generate_annoy_db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             generate_annoy_db_executor.submit(
                 self.annoy_manager.generate_annoy_db,
                 params,
                 state,
+                kwargs['history'],
                 self.keyword_tally,
                 logger
             )
@@ -380,35 +384,41 @@ class ChatGenerator:
         user_turn, bot_turn, user_turn_stripped, bot_turn_stripped = get_turn_templates(state, is_instruct, logger=logger)
 
         # Building the prompt
-        memories_header = "\nMemories:\n"
+        memories_header = "Memories:\n"
         chat_header = "\nChat:\n"
         mem_head_len = len(encode(memories_header)[0])
         chat_head_len = len(encode(chat_header)[0])
         history_partial = []
         history_rows = []
-        i = len(shared.history['internal']) - 1
+        i = len(kwargs['history']['internal']) - 1
         max_history_length = max_length - len(encode(''.join(rows))[0]) - max_memory_length - mem_head_len - chat_head_len
         while i >= 0 and len(encode(''.join(history_rows))[0]) < max_history_length:
-            if _continue and i == len(shared.history['internal']) - 1:
-                history_rows.insert(0, bot_turn_stripped + shared.history['internal'][i][1].strip())
+            if _continue and i == len(kwargs['history']['internal']) - 1:
+                history_rows.insert(0, bot_turn_stripped + kwargs['history']['internal'][i][1].strip())
             else:
-                history_rows.insert(0, bot_turn.replace('<|bot-message|>', shared.history['internal'][i][1].strip()))
+                history_rows.insert(0, bot_turn.replace('<|bot-message|>', kwargs['history']['internal'][i][1].strip()))
 
-            string = shared.history['internal'][i][0]
+            string = kwargs['history']['internal'][i][0]
             if string not in ['', '<|BEGIN-VISIBLE-CHAT|>']:
                 history_rows.insert(0, replace_all(user_turn, {'<|user-message|>': string.strip(), '<|round|>': str(i)}))
 
-            history_partial.append(shared.history['internal'][i])
+            history_partial.append(kwargs['history']['internal'][i])
             i -= 1
 
+        # Check if memory_stack needs refreshed.
+        if state['name2'] != self.loaded_character:
+            self.memory_stack = deque()
+            self.loaded_character = state['name2']
+
         # Adding related memories to the prompt
-        rows.append(memories_header)
+        rows.insert(0, memories_header)
         memory_trigger = []
-        if len(shared.history['internal']) > 0 and len(shared.history['internal'][-1]) > 1:
-            memory_trigger.append(shared.history['internal'][-1][1])
+        if len(kwargs['history']['internal']) > 0 and len(kwargs['history']['internal'][-1]) > 1:
+            memory_trigger.append(kwargs['history']['internal'][-1][1])
         memory_trigger.append(user_input)
         related_memories = self.retrieve_related_memories(
             state,
+            kwargs['history'],
             self.annoy_index,
             memory_trigger,
             history_partial,
@@ -433,9 +443,9 @@ class ChatGenerator:
         
 
         # Insert memory_rows to the prompt
-        rows.extend(memory_rows)
+        rows.insert(1, chat_header)
+        rows[1:1] = memory_rows
 
-        rows.append(chat_header)
 
         # Insert the history_rows
         rows.extend(history_rows)
@@ -446,10 +456,10 @@ class ChatGenerator:
         elif not _continue:
             # Adding the user message
             if len(user_input) > 0:
-                rows.append(replace_all(user_turn, {'<|user-message|>': user_input.strip(), '<|round|>': str(len(shared.history["internal"]))}))
+                rows.append(replace_all(user_turn, {'<|user-message|>': user_input.strip(), '<|round|>': str(len(kwargs['history']["internal"]))}))
 
             # Adding the Character prefix
-            rows.append(apply_extensions("bot_prefix", bot_turn_stripped.rstrip(' ')))
+            rows.append(apply_extensions("bot_prefix", bot_turn_stripped.rstrip(' '), state=state))
 
         while len(rows) > min_rows and len(encode(''.join(rows))[0]) >= max_length:
             if len(rows) > 3 + len(memory_rows) + min_rows:                                                       

@@ -30,24 +30,24 @@ def load_metadata(filepath):
             return json.load(f)
     return None
 
-def compute_hashes(remove_last_user_message=False):
+def compute_hashes(history, remove_last_user_message=False):
     # Compute hash for each Python file in the same directory
     python_files = glob.glob(os.path.join(os.path.dirname(__file__), '*.py'))
     code_hash = ''.join(sorted([compute_file_hash(file) for file in python_files]))
 
     if remove_last_user_message:
-        messages_hash = [hashlib.md5(str(msg).encode()).hexdigest() for msg in shared.history['internal'][:-1]]
+        messages_hash = [hashlib.md5(str(msg).encode()).hexdigest() for msg in history['internal'][:-1]]
     else:
-        messages_hash = [hashlib.md5(str(msg).encode()).hexdigest() for msg in shared.history['internal']]
+        messages_hash = [hashlib.md5(str(msg).encode()).hexdigest() for msg in history['internal']]
 
     return code_hash, messages_hash
 
 
-def check_hashes(metadata, logger):
+def check_hashes(metadata, history, logger):
     if metadata is None:
         return False
 
-    code_hash, messages_hash = compute_hashes(remove_last_user_message=True)
+    code_hash, messages_hash = compute_hashes(history, remove_last_user_message=True)
     
     logger(f"Metadata code hash: {metadata['code_hash']}", 5)
     logger(f"Computed code hash: {code_hash}", 5)
