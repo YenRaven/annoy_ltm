@@ -79,9 +79,9 @@ class AnnoyManager:
                         logger(f"loaded metadata file ({len(self.metadata['messages_hash'])})", 2)
                 
 
-                
-                self.hidden_size = self._get_hidden_size(params, logger)
-                if self.annoy_index == None:  
+                hidden_size = self._get_hidden_size(params, logger)
+                if self.annoy_index == None or self.hidden_size != hidden_size:
+                    self.hidden_size = hidden_size  
                     loaded_annoy_index = AnnoyIndex(self.hidden_size, 'angular')
                     self.annoy_index = AnnoyIndex(self.hidden_size, 'angular')
                     
@@ -103,6 +103,7 @@ class AnnoyManager:
                     else:
                         logger(f"hashes check failed, either an existing message changed unexpectdly or the extension code has changed. Rebuilding annoy db...", 2)
                         keyword_tally = KeywordTally()
+                        self.loaded_history_last_index = 0
 
                 formated_history_rows = apply_turn_templates_to_rows(history['internal'][self.loaded_history_last_index:], state, logger=logger)
                 logger(f"found {len(formated_history_rows)} rows of chat history to be added to memory db. adding items...", 3)

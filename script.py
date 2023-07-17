@@ -44,6 +44,7 @@ class ChatGenerator:
     def __init__(self):
         self.memory_stack = deque()
         self.loaded_character = None
+        self.loaded_model = None
         self.keyword_tally = KeywordTally()
         self.text_preprocessor = TextPreprocessor()
         self.annoy_manager = AnnoyManager(self.text_preprocessor)
@@ -339,6 +340,12 @@ class ChatGenerator:
         generate_annoy_db_executor = None
         save_files_to_disk_executor = None
 
+        
+        # Check if memory_stack needs refreshed.
+        if state['name2'] != self.loaded_character or shared.model_name != self.loaded_model:
+            self.memory_stack = deque()
+            self.annoy_index = None
+            self.loaded_character = state['name2']
 
         # Generate annoy database for LTM
         if self.annoy_index == None:
@@ -404,11 +411,6 @@ class ChatGenerator:
 
             history_partial.append(kwargs['history']['internal'][i])
             i -= 1
-
-        # Check if memory_stack needs refreshed.
-        if state['name2'] != self.loaded_character:
-            self.memory_stack = deque()
-            self.loaded_character = state['name2']
 
         # Adding related memories to the prompt
         rows.insert(0, memories_header)
